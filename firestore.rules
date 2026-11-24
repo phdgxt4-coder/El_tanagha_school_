@@ -1,0 +1,85 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function role(r) { return signedIn() && request.auth.token.role == r; }
+    function teacherOrAdmin() { return role('teacher') || role('admin'); }
+    function admin() { return role('admin'); }
+    function own(uid) { return signedIn() && uid == request.auth.uid; }
+    function linkedParent() {
+      return signedIn()
+        && resource.data.keys().hasAny(['parentIds'])
+        && resource.data.parentIds is list
+        && request.auth.uid in resource.data.parentIds;
+    }
+    function notificationRecipient() {
+      return admin()
+        || own(resource.data.recipientId)
+        || own(resource.data.ownerId)
+        || (resource.data.keys().hasAny(['recipientIds'])
+          && resource.data.recipientIds is list
+          && request.auth.uid in resource.data.recipientIds);
+    }
+
+    match /users/{uid} {
+      allow read: if own(uid) || admin();
+      allow create: if own(uid) && request.resource.data.role == 'student';
+      allow update: if admin() || (own(uid) && request.resource.data.role == resource.data.role);
+      allow delete: if admin();
+    }
+    match /subjects/{id} { allow read: if signedIn(); allow write: if admin(); }
+    match /news/{id} { allow read: if signedIn(); allow write: if admin(); }
+    match /lessons/{id} { allow read: if signedIn(); allow write: if teacherOrAdmin(); }
+    match /videos/{id} { allow read: if signedIn(); allow write: if teacherOrAdmin(); }
+    match /assignments/{id} {
+      allow read: if teacherOrAdmin() || own(resource.data.teacherId) || own(resource.data.studentId) || linkedParent();
+      allow create, update, delete: if teacherOrAdmin();
+    }
+    match /exams/{id} { allow read: if signedIn(); allow write: if teacherOrAdmin(); }
+    match /grades/{id} {
+      allow read: if teacherOrAdmin() || own(resource.data.studentId) || linkedParent();
+      allow write: if teacherOrAdmin();
+    }
+    match /attendance/{id} {
+      allow read: if teacherOrAdmin() || own(resource.data.studentId) || linkedParent();
+      allow write: if teacherOrAdmin();
+    }
+    match /messages/{id} {
+      allow read: if teacherOrAdmin() || own(resource.data.senderId) || own(resource.data.recipientId);
+      allow create: if signedIn()
+        && own(request.resource.data.senderId)
+        && request.resource.data.keys().hasOnly(['senderId', 'recipientId', 'subject', 'body', 'ownerId', 'createdAt'])
+        && request.resource.data.keys().hasAll(['senderId', 'recipientId', 'body']);
+      allow update: if admin() || (own(resource.data.senderId)
+        && request.resource.data.senderId == resource.data.senderId
+        && request.resource.data.recipientId == resource.data.recipientId);
+      allow delete: if admin() || own(resource.data.senderId);
+    }
+    match /schedule/{id} { allow read: if signedIn(); allow write: if teacherOrAdmin(); }
+    match /notifications/{id} {
+      allow read: if notificationRecipient();
+      allow write: if teacherOrAdmin();
+    }
+    match /reports/{id} {
+      allow read: if admin() || own(resource.data.ownerId) || own(resource.data.studentId) || linkedParent();
+      allow write: if admin();
+    }
+    match /questions/{id} { allow read: if teacherOrAdmin(); allow write: if teacherOrAdmin(); }
+    match /submissions/{id} {
+      allow read: if teacherOrAdmin() || own(resource.data.studentId);
+      allow create: if role('student')
+        && own(request.resource.data.studentId)
+        && request.resource.data.keys().hasOnly(['studentId', 'ownerId', 'createdAt', 'title', 'fileUrl'])
+        && request.resource.data.keys().hasAll(['studentId']);
+      allow update, delete: if teacherOrAdmin();
+    }
+    match /favorites/{id} {
+      allow read: if role('student') && own(resource.data.ownerId);
+      allow create: if role('student') && own(request.resource.data.ownerId);
+      allow update: if role('student') && own(resource.data.ownerId)
+        && own(request.resource.data.ownerId)
+        && request.resource.data.ownerId == resource.data.ownerId;
+      allow delete: if role('student') && own(resource.data.ownerId);
+    }
+  }
+}

@@ -1,0 +1,26 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() { return request.auth != null; }
+    function admin() { return signedIn() && request.auth.token.role == 'admin'; }
+    function teacher() { return signedIn() && request.auth.token.role == 'teacher'; }
+    function mayManageFolder(teacherId) { return admin() || (teacher() && request.auth.uid == teacherId); }
+    function allowedLessonType() {
+      return request.resource.contentType in [
+        'application/pdf', 'image/jpeg', 'image/png', 'image/gif', 'image/webp',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.ms-powerpoint',
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+      ];
+    }
+
+    match /lessons/{teacherId}/{fileName} {
+      allow read: if signedIn();
+      allow create, update: if mayManageFolder(teacherId)
+        && request.resource.size <= 25 * 1024 * 1024
+        && allowedLessonType();
+      allow delete: if mayManageFolder(teacherId);
+    }
+  }
+}
